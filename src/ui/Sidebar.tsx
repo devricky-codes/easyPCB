@@ -1,8 +1,31 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '../model/store';
 import { verifyPlanegcs } from '../solver/gcs';
-import { DEFAULT_HOLE_DIAMETER_MM } from '../constants';
+import { DEFAULT_HOLE_DIAMETER_MM, FEATURES } from '../constants';
 import type { ConstraintType, HoleKind, Project } from '../model/types';
+
+function UnentanglePanel({ traceId }: { traceId: string }) {
+  const unentangleTrace = useStore((s) => s.unentangleTrace);
+  const [gapMm, setGapMm] = useState(0.15);
+  return (
+    <div className="space-y-1 border-t border-border pt-2 mt-1">
+      <Field label="gap mm">
+        <NumberInput
+          value={gapMm}
+          min={0.05}
+          step={0.05}
+          onChange={setGapMm}
+        />
+      </Field>
+      <button
+        onClick={() => void unentangleTrace(traceId, gapMm)}
+        className="w-full px-2 py-1 rounded border border-border bg-bg hover:border-accent hover:text-accent text-xs"
+      >
+        un-entangle
+      </button>
+    </div>
+  );
+}
 
 export function Sidebar() {
   const tool = useStore((s) => s.tool);
@@ -12,6 +35,9 @@ export function Sidebar() {
   const deleteHole = useStore((s) => s.deleteHole);
   const updateTrace = useStore((s) => s.updateTrace);
   const deleteTrace = useStore((s) => s.deleteTrace);
+  // label offsets (feature: labels)
+  const setHoleLabelOffset = useStore((s) => s.setHoleLabelOffset);
+  const setTraceLabelOffset = useStore((s) => s.setTraceLabelOffset);
   const addConstraint = useStore((s) => s.addConstraint);
   const deleteConstraint = useStore((s) => s.deleteConstraint);
   const solveStatus = useStore((s) => s.solveStatus);
@@ -103,6 +129,25 @@ export function Sidebar() {
                     <option value="mount">mount — mechanical only</option>
                   </select>
                 </Field>
+                {FEATURES.labels && (
+                  <Field label="label">
+                    <input
+                      type="text"
+                      className="bg-bg border border-border rounded px-1 py-0.5 text-text text-xs w-full"
+                      placeholder="e.g. R1"
+                      value={hole.label ?? ''}
+                      onChange={(e) => updateHole(hole.id, { label: e.target.value || undefined })}
+                    />
+                    {hole.label && (
+                      <button
+                        className="mt-1 w-full text-xs text-muted hover:text-accent"
+                        onClick={() => setHoleLabelOffset(hole.id, { x: 3, y: -3 })}
+                      >
+                        reset label position
+                      </button>
+                    )}
+                  </Field>
+                )}
                 <button
                   onClick={() => deleteHole(hole.id)}
                   className="w-full mt-1 px-2 py-1 rounded border border-border bg-bg hover:border-red-500 hover:text-red-400 text-xs"
@@ -133,6 +178,26 @@ export function Sidebar() {
                     onChange={(v) => updateTrace(trace.id, { width: v })}
                   />
                 </Field>
+                {FEATURES.labels && (
+                  <Field label="label">
+                    <input
+                      type="text"
+                      className="bg-bg border border-border rounded px-1 py-0.5 text-text text-xs w-full"
+                      placeholder="e.g. GND"
+                      value={trace.label ?? ''}
+                      onChange={(e) => updateTrace(trace.id, { label: e.target.value || undefined })}
+                    />
+                    {trace.label && (
+                      <button
+                        className="mt-1 w-full text-xs text-muted hover:text-accent"
+                        onClick={() => setTraceLabelOffset(trace.id, { x: 3, y: -3 })}
+                      >
+                        reset label position
+                      </button>
+                    )}
+                  </Field>
+                )}
+                {FEATURES.unentangle && <UnentanglePanel traceId={trace.id} />}
                 <button
                   onClick={() => deleteTrace(trace.id)}
                   className="w-full mt-1 px-2 py-1 rounded border border-border bg-bg hover:border-red-500 hover:text-red-400 text-xs"

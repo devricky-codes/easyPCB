@@ -54,6 +54,8 @@ type State = {
   draftConstrStart: Point | null;
   /** Non-null while the chain-pad tool is active and an anchor has been placed. */
   chainDraft: { startPos: Point } | null;
+  /** Result message from the last un-entangle operation (feature: unentangle). */
+  unentangleStatus: string | null;
 };
 
 type Actions = {
@@ -119,6 +121,15 @@ type Actions = {
   beginChain: (p: Point) => void;
   commitChainPositions: (positions: Point[]) => void;
   cancelChain: () => void;
+
+  // labels (feature: labels)
+  setHoleLabelOffset: (id: string, offset: Point) => void;
+  setTraceLabelOffset: (id: string, offset: Point) => void;
+
+  // un-entangle (feature: unentangle)
+  unentangleStatus: string | null;
+  clearUnentangleStatus: () => void;
+  unentangleTrace: (traceId: string, gapMm?: number) => Promise<void>;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -146,6 +157,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   measurePoints: [],
   showConstruction: true,
   draftConstrStart: null,
+  unentangleStatus: null,
 
   // ---- view ----
   setTool: (t) =>
@@ -369,6 +381,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       chainDraft: null,
       conflictingIds: [],
       solveStatus: null,
+      unentangleStatus: null,
       tool: 'select',
     });
   },
@@ -385,6 +398,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       chainDraft: null,
       conflictingIds: [],
       solveStatus: null,
+      unentangleStatus: null,
       tool: 'select',
     });
   },
@@ -458,4 +472,44 @@ export const useStore = create<State & Actions>((set, get) => ({
     if (get().autoSolve) void get().runSolve();
   },
   cancelChain: () => set({ chainDraft: null }),
+
+  // ---- labels ----
+  setHoleLabelOffset: (id, offset) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        holes: s.project.holes.map((h) => (h.id === id ? { ...h, labelOffset: offset } : h)),
+      },
+    })),
+  setTraceLabelOffset: (id, offset) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        traces: s.project.traces.map((t) => (t.id === id ? { ...t, labelOffset: offset } : t)),
+      },
+    })),
+
+  // ---- un-entangle ----
+  clearUnentangleStatus: () => set({ unentangleStatus: null }),
+  unentangleTrace: async (traceId, gapMm = 0) => {
+    const { project } = get();
+    const trace = project.traces.find((t) => t.id === traceId);
+    if (!trace) return;
+    const { routeTrace } = await import('../routing/astar');
+    const result = routeTrace(trace, project, gapMm);
+    if (!result.ok) {
+      set({ unentangleStatus: result.error ?? 'No valid path possible' });
+      return;
+    }
+    get().pushHistory();
+    set((s) => ({
+      project: {
+        ...s.project,
+        traces: s.project.traces.map((t) =>
+          t.id === traceId ? { ...t, nodes: result.nodes! } : t,
+        ),
+      },
+      unentangleStatus: result.info ?? `Re-routed — ${result.nodes!.length - 1} segment(s)`,
+    }));
+  },
 }));

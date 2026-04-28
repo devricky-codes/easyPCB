@@ -21,6 +21,8 @@ export type Hole = {
   diameter: number;
   kind: HoleKind;
   label?: string;
+  /** Offset of the draggable label anchor from the hole centre (mm). Feature: labels. */
+  labelOffset?: Point;
 };
 
 export type TraceNode =
@@ -32,6 +34,9 @@ export type Trace = {
   id: string;
   nodes: TraceNode[];
   width: number;
+  label?: string;
+  /** Offset of the draggable label anchor from the trace midpoint (mm). Feature: labels. */
+  labelOffset?: Point;
 };
 
 export type ConstraintType =

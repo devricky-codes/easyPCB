@@ -14,3 +14,12 @@ export const SELECT_HALO_PX = 3;
 
 /** Standard 0.1" DIP / pin-header pitch in mm. */
 export const CHAIN_PITCH_MM = 2.54;
+
+// ─── Feature flags ────────────────────────────────────────────────────────────
+// Set a flag to `true` to enable the corresponding experimental feature.
+export const FEATURES = {
+  /** Auto-route a selected trace away from obstacles (A* on a 0.25 mm grid). */
+  unentangle: true,
+  /** Draggable leader-line labels on holes and traces. */
+  labels: true,
+} as const;

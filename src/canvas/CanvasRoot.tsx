@@ -10,9 +10,10 @@ import { ConstraintLayer } from './ConstraintLayer';
 import { ConstructionLayer } from './ConstructionLayer';
 import { MeasureLayer } from './MeasureLayer';
 import { ChainLayer, computeChainPositions } from './ChainLayer';
+import { LabelLayer } from './LabelLayer';
 import { pxToMm, snapPoint, getAdaptiveGridStep, fmtGridStep } from './viewport';
 import type { Board, Hole, Point, Project, Trace } from '../model/types';
-import { MIN_PX_PER_MM, MAX_PX_PER_MM, ZOOM_STEP } from '../constants';
+import { MIN_PX_PER_MM, MAX_PX_PER_MM, ZOOM_STEP, FEATURES } from '../constants';
 import { findTraceAt, resolveTrace } from '../model/traceUtils';
 
 const SELECT_HALO_PX = 6;
@@ -156,6 +157,13 @@ export function CanvasRoot() {
   const beginChain = useStore((s) => s.beginChain);
   const commitChainPositions = useStore((s) => s.commitChainPositions);
   const cancelChain = useStore((s) => s.cancelChain);
+  // labels (feature: labels)
+  const setHoleLabelOffset = useStore((s) => s.setHoleLabelOffset);
+  const setTraceLabelOffset = useStore((s) => s.setTraceLabelOffset);
+  // un-entangle (feature: unentangle)
+  const unentangleTrace = useStore((s) => s.unentangleTrace);
+  const unentangleStatus = useStore((s) => s.unentangleStatus);
+  const clearUnentangleStatus = useStore((s) => s.clearUnentangleStatus);
 
   // size tracking
   useEffect(() => {
@@ -461,6 +469,10 @@ export function CanvasRoot() {
         : [chainDraft.startPos];
       commitChainPositions(positions);
     }
+    // right-click on selected trace in select tool → un-entangle
+    if (FEATURES.unentangle && tool === 'select' && selection.kind === 'trace') {
+      void unentangleTrace(selection.id);
+    }
   };
 
   return (
@@ -509,8 +521,19 @@ export function CanvasRoot() {
             view={view}
           />
         )}
+        {FEATURES.labels && (
+          <LabelLayer
+            project={project}
+            view={view}
+            onMoveHoleLabel={setHoleLabelOffset}
+            onMoveTraceLabel={setTraceLabelOffset}
+          />
+        )}
       </Stage>
       <CursorOverlay cursorMm={cursorMm} view={view} snapMm={gridMm} />
+      {FEATURES.unentangle && unentangleStatus && (
+        <UnentangleToast status={unentangleStatus} onDismiss={clearUnentangleStatus} />
+      )}
     </div>
   );
 }
@@ -543,6 +566,24 @@ function findTraceAtPx(
     }
   }
   return null;
+}
+
+/** Small auto-dismissing toast for un-entangle results. */
+function UnentangleToast({ status, onDismiss }: { status: string; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(t);
+  }, [onDismiss, status]);
+
+  const isOk = !status.startsWith('No valid') && !status.startsWith('Error');
+  return (
+    <div
+      className={`absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded border text-sm font-mono shadow-lg pointer-events-none
+        ${isOk ? 'bg-green-900/90 border-green-500 text-green-300' : 'bg-red-900/90 border-red-500 text-red-300'}`}
+    >
+      {isOk ? '✓ ' : '✗ '}{status}
+    </div>
+  );
 }
 
 function CursorOverlay({
