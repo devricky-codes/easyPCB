@@ -29,7 +29,7 @@ const ARC_RADIUS_PX = 38;
 
 // Convert mm distance to a formatted string
 function fmtMm(d: number): string {
-  return d < 10 ? `${d.toFixed(3)} mm` : `${d.toFixed(2)} mm`;
+  return `${d.toFixed(2)} mm`;
 }
 function fmtDeg(a: number): string {
   return `${a.toFixed(2)}°`;

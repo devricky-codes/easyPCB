@@ -76,7 +76,7 @@ export type Project = {
   constructionLines: ConstructionLine[];
 };
 
-export type Tool = 'select' | 'board' | 'hole' | 'trace' | 'measure' | 'constr';
+export type Tool = 'select' | 'board' | 'hole' | 'trace' | 'measure' | 'constr' | 'chain';
 
 export type Selection =
   | { kind: 'none' }

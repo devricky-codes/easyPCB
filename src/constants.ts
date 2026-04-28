@@ -11,3 +11,6 @@ export const ZOOM_STEP = 1.15;
 
 export const HOLE_RING_PX = 2; // visual ring thickness (screen px, not mm)
 export const SELECT_HALO_PX = 3;
+
+/** Standard 0.1" DIP / pin-header pitch in mm. */
+export const CHAIN_PITCH_MM = 2.54;

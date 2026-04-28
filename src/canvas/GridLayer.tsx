@@ -1,61 +1,77 @@
 import { Layer, Line } from 'react-konva';
 import type { Viewport } from './viewport';
+import { getAdaptiveGridStep } from './viewport';
 
 type Props = {
   width: number;
   height: number;
   view: Viewport;
-  gridMm: number;
+  gridMm: number; // snap grid step — used to highlight snap-aligned lines
 };
 
-// Draws a grid in screen space. Computes which mm-grid lines are visible
-// and renders them. Subdivides into minor (mm) and major (every 10) lines.
+/**
+ * Draws an adaptive grid:
+ *  - Display step auto-scales with zoom (finest cell = 0.01 mm at max zoom).
+ *  - Major lines every 10 display steps.
+ *  - Lines that coincide with the snap grid are drawn slightly brighter.
+ */
 export function GridLayer({ width, height, view, gridMm }: Props) {
   const { pxPerMm, offsetX, offsetY } = view;
-  const stepPx = gridMm * pxPerMm;
+  const displayStep = getAdaptiveGridStep(pxPerMm);
+  const stepPx = displayStep * pxPerMm;
 
-  // skip rendering if grid lines are too dense (perf)
-  if (stepPx < 4) return null;
+  if (stepPx < MIN_DRAW_PX) return null;
 
-  const lines: { points: number[]; major: boolean }[] = [];
-
-  // first mm coord visible on screen left edge
   const leftMm = -offsetX / pxPerMm;
-  const topMm = -offsetY / pxPerMm;
+  const topMm  = -offsetY / pxPerMm;
+  const endMmX = leftMm + width  / pxPerMm;
+  const endMmY = topMm  + height / pxPerMm;
 
-  const startMmX = Math.floor(leftMm / gridMm) * gridMm;
-  const startMmY = Math.floor(topMm / gridMm) * gridMm;
-  const endMmX = leftMm + width / pxPerMm;
-  const endMmY = topMm + height / pxPerMm;
+  const startMmX = Math.floor(leftMm / displayStep) * displayStep;
+  const startMmY = Math.floor(topMm  / displayStep) * displayStep;
 
-  for (let mx = startMmX; mx <= endMmX; mx += gridMm) {
-    const px = mx * pxPerMm + offsetX;
-    const major = Math.abs(Math.round(mx / gridMm) % 10) === 0;
-    lines.push({ points: [px, 0, px, height], major });
+  const majorStep = displayStep * 10;
+  const EPS = displayStep * 0.01;
+
+  function lineKind(v: number): 'major' | 'snap' | 'minor' {
+    const nearZero = (x: number, mod: number) => {
+      const r = ((x % mod) + mod) % mod;
+      return r < EPS || r > mod - EPS;
+    };
+    if (nearZero(v, majorStep)) return 'major';
+    if (gridMm >= displayStep && nearZero(v, gridMm)) return 'snap';
+    return 'minor';
   }
-  for (let my = startMmY; my <= endMmY; my += gridMm) {
-    const py = my * pxPerMm + offsetY;
-    const major = Math.abs(Math.round(my / gridMm) % 10) === 0;
-    lines.push({ points: [0, py, width, py], major });
+
+  const vLines: { px: number; kind: 'major' | 'snap' | 'minor' }[] = [];
+  const hLines: { py: number; kind: 'major' | 'snap' | 'minor' }[] = [];
+
+  for (let mx = startMmX; mx <= endMmX + EPS; mx += displayStep) {
+    const rounded = Math.round(mx / displayStep) * displayStep;
+    vLines.push({ px: rounded * pxPerMm + offsetX, kind: lineKind(rounded) });
+  }
+  for (let my = startMmY; my <= endMmY + EPS; my += displayStep) {
+    const rounded = Math.round(my / displayStep) * displayStep;
+    hLines.push({ py: rounded * pxPerMm + offsetY, kind: lineKind(rounded) });
   }
 
-  // origin axes
+  const COLOR: Record<string, string> = { major: '#3a3a3a', snap: '#323232', minor: '#252525' };
   const ox = offsetX;
   const oy = offsetY;
 
   return (
     <Layer listening={false}>
-      {lines.map((l, i) => (
-        <Line
-          key={i}
-          points={l.points}
-          stroke={l.major ? '#3a3a3a' : '#2a2a2a'}
-          strokeWidth={1}
-          listening={false}
-        />
+      {vLines.map((l, i) => (
+        <Line key={`v${i}`} points={[l.px, 0, l.px, height]} stroke={COLOR[l.kind]} strokeWidth={1} listening={false} />
       ))}
+      {hLines.map((l, i) => (
+        <Line key={`h${i}`} points={[0, l.py, width, l.py]} stroke={COLOR[l.kind]} strokeWidth={1} listening={false} />
+      ))}
+      {/* Origin axes */}
       <Line points={[ox, 0, ox, height]} stroke="#555" strokeWidth={1} listening={false} />
       <Line points={[0, oy, width, oy]} stroke="#555" strokeWidth={1} listening={false} />
     </Layer>
   );
 }
+
+const MIN_DRAW_PX = 2;

@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../model/store';
 import { verifyPlanegcs } from '../solver/gcs';
 import { DEFAULT_HOLE_DIAMETER_MM } from '../constants';
-import type { ConstraintType, HoleKind } from '../model/types';
+import type { ConstraintType, HoleKind, Project } from '../model/types';
 
 export function Sidebar() {
   const tool = useStore((s) => s.tool);
@@ -37,10 +37,8 @@ export function Sidebar() {
           {tool === 'hole' && `click canvas to place a ${DEFAULT_HOLE_DIAMETER_MM} mm hole.`}
           {tool === 'trace' &&
             'click to place nodes. snap to hole = magenta / snap to trace = T-junction. Enter or RMB to finish. Esc cancels.'}
-          {tool === 'measure' &&
-            'click 2 points → distance. click 3rd point → angle at middle. Esc clears. Next click restarts.'}
-          {tool === 'constr' &&
-            'click 2 points to draw a guide line (extends to infinity). Esc cancels current line.'}
+          {tool === 'chain' &&
+            'click to anchor first pad. move mouse — pads extend at 2.54 mm pitch. RMB to commit all pads with spacing constraints. Esc cancels.'}
           {tool === 'measure' &&
             'click 2 points → distance. click 3rd point → angle at middle. Esc clears. Next click restarts.'}
           {tool === 'constr' &&
@@ -263,6 +261,88 @@ const SINGLE_ENTITY_TYPES: ConstraintType[] = ['horizontal', 'vertical', 'fixed'
 // Constraint types that need a numeric value
 const VALUED_TYPES: ConstraintType[] = ['distance', 'angle'];
 
+// ─── Measure the current value between two pinned entities ───────────────────
+function measureBetween(
+  e1: EntityPin,
+  e2: EntityPin,
+  project: Project,
+): { distance: number | null; angle: number | null } {
+  if (!e1 || !e2) return { distance: null, angle: null };
+
+  const getPoint = (ep: NonNullable<EntityPin>): { x: number; y: number } | null => {
+    if (ep.kind === 'hole') {
+      return project.holes.find((h) => h.id === ep.id)?.position ?? null;
+    }
+    if (ep.kind === 'board-vertex') {
+      // id format: bv_<boardId>_<index>
+      const idx = parseInt(ep.id.split('_').pop() ?? '', 10);
+      return project.board?.vertices[idx] ?? null;
+    }
+    return null;
+  };
+
+  const getLine = (
+    ep: NonNullable<EntityPin>,
+  ): [{ x: number; y: number }, { x: number; y: number }] | null => {
+    if (ep.kind === 'board-edge') {
+      // id format: be_<boardId>_<index>
+      const idx = parseInt(ep.id.split('_').pop() ?? '', 10);
+      const b = project.board;
+      if (!b) return null;
+      const n = b.vertices.length;
+      return [b.vertices[idx % n], b.vertices[(idx + 1) % n]];
+    }
+    if (ep.kind === 'constr-line') {
+      // id format: cl_<clId>
+      const clId = ep.id.replace(/^cl_/, '');
+      const cl = project.constructionLines.find((l) => l.id === clId);
+      return cl ? [cl.start, cl.end] : null;
+    }
+    return null;
+  };
+
+  const p1 = getPoint(e1);
+  const p2 = getPoint(e2);
+  const l1 = getLine(e1);
+  const l2 = getLine(e2);
+
+  // point ↔ point
+  if (p1 && p2) {
+    return { distance: Math.hypot(p2.x - p1.x, p2.y - p1.y), angle: null };
+  }
+  // point ↔ line (perpendicular distance)
+  if (p1 && l2) {
+    const [a, b] = l2;
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-10) return { distance: null, angle: null };
+    return { distance: Math.abs((p1.y - a.y) * dx - (p1.x - a.x) * dy) / len, angle: null };
+  }
+  if (p2 && l1) {
+    const [a, b] = l1;
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-10) return { distance: null, angle: null };
+    return { distance: Math.abs((p2.y - a.y) * dx - (p2.x - a.x) * dy) / len, angle: null };
+  }
+  // line ↔ line (angle + perpendicular distance for parallel case)
+  if (l1 && l2) {
+    const a1 = Math.atan2(l1[1].y - l1[0].y, l1[1].x - l1[0].x);
+    const a2 = Math.atan2(l2[1].y - l2[0].y, l2[1].x - l2[0].x);
+    let deg = Math.abs((a2 - a1) * (180 / Math.PI));
+    if (deg > 180) deg = 360 - deg;
+    // Perpendicular distance from l2[0] to the infinite line through l1.
+    // Meaningful when lines are parallel (deg ≈ 0 or 180); equals 0 when they intersect.
+    const dx = l1[1].x - l1[0].x;
+    const dy = l1[1].y - l1[0].y;
+    const len = Math.hypot(dx, dy);
+    const dist = len < 1e-10 ? null
+      : Math.abs((l2[0].y - l1[0].y) * dx - (l2[0].x - l1[0].x) * dy) / len;
+    return { distance: dist, angle: deg };
+  }
+  return { distance: null, angle: null };
+}
+
 // ─── Parameters panel ────────────────────────────────────────────────────────
 
 function ParametersPanel({
@@ -400,10 +480,7 @@ function ConstraintPanel({
   onAdd,
   onDelete,
 }: {
-  project: Parameters<typeof describeSelection>[1] & {
-    constraints: { id: string; type: ConstraintType; entityIds: string[]; value?: number | string }[];
-    parameters: { name: string; value: number }[];
-  };
+  project: Project;
   selection: Parameters<typeof describeSelection>[0];
   conflictingIds: string[];
   onAdd: (c: Omit<import('../model/types').Constraint, 'id'>) => void;
@@ -422,6 +499,24 @@ function ConstraintPanel({
 
   const e1: EntityPin = isSingle ? currentEntity : pinnedE1;
   const e2: EntityPin = isSingle ? null : currentEntity;
+
+  // Auto-fill the value field with the actual measured value when both entities
+  // are selected and the constraint type needs a value.
+  useEffect(() => {
+    if (!needsValue || valueMode !== 'number' || isSingle) return;
+    const measured = measureBetween(pinnedE1, currentEntity, project);
+    if (constraintType === 'distance' && measured.distance !== null) {
+      setValueStr(measured.distance.toFixed(2));
+    } else if (constraintType === 'angle' && measured.angle !== null) {
+      setValueStr(measured.angle.toFixed(2));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedE1, selection, constraintType, needsValue, valueMode]);
+
+  // When user pins e1, also immediately fill with measured value
+  function handlePin() {
+    setPinnedE1(currentEntity);
+  }
 
   const valueValid = !needsValue || (
     valueMode === 'number'
@@ -515,7 +610,7 @@ function ConstraintPanel({
               {pinnedE1 ? `${pinnedE1.kind}:${pinnedE1.label}` : <span className="text-muted">not pinned</span>}
             </span>
             <button
-              onClick={() => setPinnedE1(currentEntity)}
+              onClick={() => handlePin()}
               disabled={!currentEntity}
               className="shrink-0 px-1.5 py-0.5 rounded border border-border bg-bg text-xs hover:border-accent disabled:opacity-40"
               title="pin current selection as entity 1"

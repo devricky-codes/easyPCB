@@ -8,6 +8,7 @@ const tools: { id: Tool; label: string; hint: string }[] = [
   { id: 'board', label: 'Board', hint: 'B' },
   { id: 'hole', label: 'Hole', hint: 'H' },
   { id: 'trace', label: 'Trace', hint: 'T' },
+  { id: 'chain', label: 'Chain Pad', hint: 'P' },
   { id: 'measure', label: 'Measure', hint: 'M' },
   { id: 'constr', label: 'Guide', hint: 'G' },
 ];

@@ -9,7 +9,8 @@ import { TraceLayer } from './TraceLayer';
 import { ConstraintLayer } from './ConstraintLayer';
 import { ConstructionLayer } from './ConstructionLayer';
 import { MeasureLayer } from './MeasureLayer';
-import { pxToMm, snapPoint } from './viewport';
+import { ChainLayer, computeChainPositions } from './ChainLayer';
+import { pxToMm, snapPoint, getAdaptiveGridStep, fmtGridStep } from './viewport';
 import type { Board, Hole, Point, Project, Trace } from '../model/types';
 import { MIN_PX_PER_MM, MAX_PX_PER_MM, ZOOM_STEP } from '../constants';
 import { findTraceAt, resolveTrace } from '../model/traceUtils';
@@ -150,6 +151,11 @@ export function CanvasRoot() {
   const draftConstrStart = useStore((s) => s.draftConstrStart);
   const setDraftConstrStart = useStore((s) => s.setDraftConstrStart);
   const addConstructionLine = useStore((s) => s.addConstructionLine);
+  // chain-pad tool
+  const chainDraft = useStore((s) => s.chainDraft);
+  const beginChain = useStore((s) => s.beginChain);
+  const commitChainPositions = useStore((s) => s.commitChainPositions);
+  const cancelChain = useStore((s) => s.cancelChain);
 
   // size tracking
   useEffect(() => {
@@ -179,6 +185,7 @@ export function CanvasRoot() {
         cancelTrace();
         clearMeasure();
         setDraftConstrStart(null);
+        cancelChain();
       } else if (e.key === 'Enter') {
         if (draftBoard) closeBoard();
         else if (draftTrace && draftTrace.nodes.length >= 2) finishTrace();
@@ -189,14 +196,26 @@ export function CanvasRoot() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [cancelBoard, cancelTrace, closeBoard, clearMeasure, setDraftConstrStart, draftBoard, draftTrace, finishTrace, selection, deleteHole, deleteTrace]);
+  }, [cancelBoard, cancelTrace, closeBoard, clearMeasure, setDraftConstrStart, cancelChain, draftBoard, draftTrace, finishTrace, selection, deleteHole, deleteTrace]);
 
   const screenToModel = useCallback(
     (sx: number, sy: number): Point => {
       const mm = pxToMm({ x: sx, y: sy }, view);
-      return snapOn ? snapPoint(mm, gridMm) : mm;
+      const snapped = snapOn ? snapPoint(mm, gridMm) : mm;
+      // Always round to 0.01 mm — this is the measurement resolution floor.
+      return { x: Math.round(snapped.x * 100) / 100, y: Math.round(snapped.y * 100) / 100 };
     },
     [view, snapOn, gridMm],
+  );
+
+  /** Fine-resolution variant: skips the coarse snap-grid, always rounds to 0.01 mm.
+   *  Used for measure / guide-line / chain tools where sub-grid precision matters. */
+  const screenToFine = useCallback(
+    (sx: number, sy: number): Point => {
+      const mm = pxToMm({ x: sx, y: sy }, view);
+      return { x: Math.round(mm.x * 100) / 100, y: Math.round(mm.y * 100) / 100 };
+    },
+    [view],
   );
 
   const onMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -213,7 +232,10 @@ export function CanvasRoot() {
     }
 
     const mm = screenToModel(pos.x, pos.y);
-    setCursorMm(mm);
+    const mmFine = screenToFine(pos.x, pos.y);
+    // Use fine-resolution for cursor display and for tools that need sub-grid precision.
+    const isFineToolActive = tool === 'measure' || tool === 'constr' || tool === 'chain';
+    setCursorMm(isFineToolActive ? mmFine : mm);
 
     // drag-to-move selected hole
     if (dragState.current && mouseDownPos.current && e.evt.buttons === 1) {
@@ -287,6 +309,7 @@ export function CanvasRoot() {
     if (!pos) return;
     const mmRaw = pxToMm({ x: pos.x, y: pos.y }, view);
     const mm = screenToModel(pos.x, pos.y);
+    const mmFine = screenToFine(pos.x, pos.y);
 
     // ---- select tool ----
     if (tool === 'select') {
@@ -382,17 +405,26 @@ export function CanvasRoot() {
 
     // ---- measure tool ----
     if (tool === 'measure') {
-      pushMeasurePoint(mm);
+      pushMeasurePoint(mmFine);
       return;
     }
 
     // ---- construction line tool ----
     if (tool === 'constr') {
       if (!draftConstrStart) {
-        setDraftConstrStart(mm);
+        setDraftConstrStart(mmFine);
       } else {
-        addConstructionLine(draftConstrStart, mm);
+        addConstructionLine(draftConstrStart, mmFine);
       }
+      return;
+    }
+
+    // ---- chain-pad tool ----
+    if (tool === 'chain') {
+      if (!chainDraft) {
+        beginChain(mmFine);
+      }
+      // subsequent left-clicks are no-ops; right-click (onContextMenu) commits
       return;
     }
   };
@@ -421,6 +453,13 @@ export function CanvasRoot() {
     // right-click in trace tool → finish trace if ≥ 2 nodes
     if (tool === 'trace' && draftTrace && draftTrace.nodes.length >= 2) {
       finishTrace();
+    }
+    // right-click in chain tool → commit all preview holes
+    if (tool === 'chain' && chainDraft) {
+      const positions = cursorMm
+        ? computeChainPositions(chainDraft.startPos, cursorMm)
+        : [chainDraft.startPos];
+      commitChainPositions(positions);
     }
   };
 
@@ -463,8 +502,15 @@ export function CanvasRoot() {
           cursorMm={tool === 'measure' ? cursorMm : null}
           view={view}
         />
+        {tool === 'chain' && chainDraft && (
+          <ChainLayer
+            startPos={chainDraft.startPos}
+            cursorMm={cursorMm}
+            view={view}
+          />
+        )}
       </Stage>
-      <CursorOverlay cursorMm={cursorMm} view={view} />
+      <CursorOverlay cursorMm={cursorMm} view={view} snapMm={gridMm} />
     </div>
   );
 }
@@ -502,14 +548,25 @@ function findTraceAtPx(
 function CursorOverlay({
   cursorMm,
   view,
+  snapMm,
 }: {
   cursorMm: Point | null;
   view: { pxPerMm: number };
+  snapMm: number;
 }) {
-  if (!cursorMm) return null;
+  const displayStep = getAdaptiveGridStep(view.pxPerMm);
+  if (!cursorMm) {
+    return (
+      <div className="absolute bottom-2 right-2 text-xs text-muted bg-panel/80 px-2 py-1 rounded border border-border font-mono">
+        grid: {fmtGridStep(displayStep)} &nbsp;|&nbsp; snap: {fmtGridStep(snapMm)}
+      </div>
+    );
+  }
   return (
     <div className="absolute bottom-2 right-2 text-xs text-muted bg-panel/80 px-2 py-1 rounded border border-border font-mono">
-      {cursorMm.x.toFixed(2)}, {cursorMm.y.toFixed(2)} mm — {view.pxPerMm.toFixed(1)} px/mm
+      {cursorMm.x.toFixed(2)}, {cursorMm.y.toFixed(2)} mm
+      &nbsp;|&nbsp; grid: <span className="text-text">{fmtGridStep(displayStep)}</span>
+      &nbsp;|&nbsp; snap: {fmtGridStep(snapMm)}
     </div>
   );
 }

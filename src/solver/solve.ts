@@ -71,6 +71,11 @@ export async function solveProject(project: Project): Promise<SolveResult> {
           if (hole) {
             hole.position = { x: solved.x, y: solved.y };
           }
+        } else if (entry.kind === 'boardVertex') {
+          // Write solved board vertex position back (only free vertices are in readback)
+          if (updatedProject.board) {
+            updatedProject.board.vertices[entry.vertexIndex] = { x: solved.x, y: solved.y };
+          }
         } else {
           // traceNode
           const trace = updatedProject.traces.find((t) => t.id === entry.traceId);

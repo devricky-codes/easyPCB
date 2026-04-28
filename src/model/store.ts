@@ -5,6 +5,7 @@ import {
   DEFAULT_TRACE_WIDTH_MM,
   INITIAL_PX_PER_MM,
   DEFAULT_GRID_MM,
+  CHAIN_PITCH_MM,
 } from '../constants';
 import { solveProject } from '../solver/solve';
 
@@ -51,6 +52,8 @@ type State = {
   showConstruction: boolean;
   /** First point of a construction line being drawn (before second click). */
   draftConstrStart: Point | null;
+  /** Non-null while the chain-pad tool is active and an anchor has been placed. */
+  chainDraft: { startPos: Point } | null;
 };
 
 type Actions = {
@@ -111,6 +114,11 @@ type Actions = {
   setDraftConstrStart: (p: Point | null) => void;
   addConstructionLine: (start: Point, end: Point) => void;
   deleteConstructionLine: (id: string) => void;
+
+  // chain-pad tool
+  beginChain: (p: Point) => void;
+  commitChainPositions: (positions: Point[]) => void;
+  cancelChain: () => void;
 };
 
 export const useStore = create<State & Actions>((set, get) => ({
@@ -129,6 +137,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   snapToGrid: true,
   draftBoard: null,
   draftTrace: null,
+  chainDraft: null,
   history: [],
   future: [],
   conflictingIds: [],
@@ -144,6 +153,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       tool: t,
       draftBoard: t === 'board' ? { vertices: [] } : s.draftBoard,
       draftTrace: t === 'trace' ? s.draftTrace : null,
+      chainDraft: t === 'chain' ? s.chainDraft : null,
     })),
   setSelection: (s) => set({ selection: s }),
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
@@ -356,6 +366,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       draftTrace: null,
       measurePoints: [],
       draftConstrStart: null,
+      chainDraft: null,
       conflictingIds: [],
       solveStatus: null,
       tool: 'select',
@@ -371,6 +382,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       draftTrace: null,
       measurePoints: [],
       draftConstrStart: null,
+      chainDraft: null,
       conflictingIds: [],
       solveStatus: null,
       tool: 'select',
@@ -410,4 +422,40 @@ export const useStore = create<State & Actions>((set, get) => ({
       },
     }));
   },
+
+  // ---- chain-pad tool ----
+  beginChain: (p) => set({ chainDraft: { startPos: p } }),
+  commitChainPositions: (positions) => {
+    if (positions.length === 0) {
+      set({ chainDraft: null });
+      return;
+    }
+    get().pushHistory();
+    const newHoles: Hole[] = positions.map((pos) => ({
+      id: uid('hole'),
+      position: pos,
+      diameter: DEFAULT_HOLE_DIAMETER_MM,
+      kind: 'pad',
+    }));
+    const newConstraints: Constraint[] = [];
+    for (let i = 0; i < newHoles.length - 1; i++) {
+      newConstraints.push({
+        id: uid('c'),
+        type: 'distance',
+        entityIds: [newHoles[i].id, newHoles[i + 1].id],
+        value: CHAIN_PITCH_MM,
+        driving: true,
+      });
+    }
+    set((s) => ({
+      project: {
+        ...s.project,
+        holes: [...s.project.holes, ...newHoles],
+        constraints: [...s.project.constraints, ...newConstraints],
+      },
+      chainDraft: null,
+    }));
+    if (get().autoSolve) void get().runSolve();
+  },
+  cancelChain: () => set({ chainDraft: null }),
 }));

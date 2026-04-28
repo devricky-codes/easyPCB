@@ -21,7 +21,8 @@ import { resolveNodePosition } from '../model/traceUtils';
 /** Describes how to patch a model entity from a solved GCS point. */
 export type ReadbackEntry =
   | { kind: 'hole'; holeId: string }
-  | { kind: 'traceNode'; traceId: string; nodeIndex: number };
+  | { kind: 'traceNode'; traceId: string; nodeIndex: number }
+  | { kind: 'boardVertex'; boardId: string; vertexIndex: number };
 
 export type TranslateResult = {
   primitives: SketchPrimitive[];
@@ -64,6 +65,14 @@ export function translateProject(project: Project): TranslateResult {
       .map((c) => c.entityIds[0]),
   );
 
+  // Which board vertices are explicitly pinned via 'fixed' constraint
+  const fixedBoardVertexEntityIds = new Set(
+    project.constraints
+      .filter((c) => c.type === 'fixed' && c.entityIds.length >= 1)
+      .map((c) => c.entityIds[0])
+      .filter((id) => id.startsWith('bv_')),
+  );
+
   // ─── Pass 0: board vertices + edges → fixed primitives ───────────────────
   // Board outline is the reference frame; all board geometry is fixed.
   if (project.board) {
@@ -76,13 +85,21 @@ export function translateProject(project: Project): TranslateResult {
       const ptId = `pt_${entityId}`;
       vertPtIds.push(ptId);
       boardVertexPointMap.set(entityId, ptId);
+      // Vertex 0 is always the reference anchor (fixed). Other vertices are free
+      // so that edge-length constraints can reshape the board.
+      // A vertex with an explicit 'fixed' constraint is also pinned.
+      const isFixed = i === 0 || fixedBoardVertexEntityIds.has(entityId);
       primitives.push({
         id: ptId,
         type: 'point',
         x: vertices[i].x,
         y: vertices[i].y,
-        fixed: true,
+        fixed: isFixed,
       } satisfies SketchPoint);
+      // Register free vertices for readback so solved positions are written back.
+      if (!isFixed) {
+        readback.set(ptId, { kind: 'boardVertex', boardId, vertexIndex: i });
+      }
     }
 
     for (let i = 0; i < n; i++) {
