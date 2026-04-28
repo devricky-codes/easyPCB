@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/constants.ts","./src/main.tsx","./src/canvas/boardlayer.tsx","./src/canvas/canvasroot.tsx","./src/canvas/gridlayer.tsx","./src/canvas/holelayer.tsx","./src/canvas/viewport.ts","./src/model/store.ts","./src/model/types.ts","./src/solver/gcs.ts","./src/ui/sidebar.tsx","./src/ui/toolbar.tsx"],"errors":true,"version":"5.9.3"}
